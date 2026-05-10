@@ -25,11 +25,16 @@ def get_connection():
     return conn
 
 def init_db():
-    """Инициализация базы данных."""
+    import os
+
     conn = get_connection()
     cursor = conn.cursor()
 
-    schema_path = os.path.join(os.path.dirname(__file__), "schema.sql")
+    # 🔥 правильный абсолютный путь
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    schema_path = os.path.join(base_dir, "storage", "schema.sql")
+
+    print("INIT DB:", schema_path)
     with open(schema_path, "r", encoding="utf-8") as f:
         schema_sql = f.read()
 

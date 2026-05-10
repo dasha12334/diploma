@@ -13,3 +13,8 @@ EVENT_CREATE_VAULT = "create_vault"
 EVENT_OPEN_VAULT = "open_vault"
 EVENT_ADD_SECRET = "add_secret"
 EVENT_DELETE_SECRET = "delete_secret"
+
+ROLE_OWNER = "owner"
+ROLE_ADMIN = "admin"
+ROLE_USER = "user"
+ROLE_VIEWER = "viewer"

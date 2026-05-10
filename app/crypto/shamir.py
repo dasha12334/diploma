@@ -3,26 +3,16 @@ from __future__ import annotations
 import secrets
 from typing import List, Sequence, Tuple
 
-# Большое простое число.
-# Оно больше любого 256-битного ключа, поэтому подходит для secret sharing.
 PRIME = 2**521 - 1
-
 Share = Tuple[int, int]
-
 
 def _bytes_to_int(data: bytes) -> int:
     return int.from_bytes(data, byteorder="big")
 
-
 def _int_to_bytes(value: int, length: int) -> bytes:
     return value.to_bytes(length, byteorder="big")
 
-
 def _eval_polynomial(coeffs: Sequence[int], x: int, prime: int) -> int:
-    """
-    Вычисляет значение полинома в точке x:
-    a0 + a1*x + a2*x^2 + ...
-    """
     result = 0
     power = 1
 
@@ -32,12 +22,8 @@ def _eval_polynomial(coeffs: Sequence[int], x: int, prime: int) -> int:
 
     return result
 
-
 def split_secret(secret: bytes, n: int, k: int) -> List[Share]:
-    """
-    Делит secret на n долей так, чтобы для восстановления нужно было минимум k долей.
-    Возвращает список пар (x, y).
-    """
+
     if not secret:
         raise ValueError("Secret must not be empty")
 
@@ -49,7 +35,6 @@ def split_secret(secret: bytes, n: int, k: int) -> List[Share]:
     if secret_int >= PRIME:
         raise ValueError("Secret is too large for the chosen field")
 
-    # a0 = secret, остальные коэффициенты случайные
     coeffs = [secret_int] + [secrets.randbelow(PRIME) for _ in range(k - 1)]
 
     shares: List[Share] = []
@@ -59,11 +44,8 @@ def split_secret(secret: bytes, n: int, k: int) -> List[Share]:
 
     return shares
 
-
 def _lagrange_interpolate_zero(shares: Sequence[Share], prime: int) -> int:
-    """
-    Восстанавливает значение полинома в точке 0 по методу Лагранжа.
-    """
+
     secret = 0
 
     for i, (x_i, y_i) in enumerate(shares):
@@ -76,28 +58,74 @@ def _lagrange_interpolate_zero(shares: Sequence[Share], prime: int) -> int:
             numerator = (numerator * (-x_j)) % prime
             denominator = (denominator * (x_i - x_j)) % prime
 
-        # Обратный элемент по модулю prime
         lagrange_coeff = numerator * pow(denominator, -1, prime)
         secret = (prime + secret + (y_i * lagrange_coeff)) % prime
 
     return secret
 
-
 def reconstruct_secret(shares: Sequence[Share], secret_length: int) -> bytes:
-    """
-    Восстанавливает secret по любому набору из k или более долей.
-    secret_length нужен, чтобы вернуть исходную длину байтов.
-    """
+
     if secret_length <= 0:
         raise ValueError("secret_length must be positive")
 
     if len(shares) < 2:
         raise ValueError("At least 2 shares are required")
 
-    # Проверка на дубликаты x
     xs = [x for x, _ in shares]
     if len(xs) != len(set(xs)):
         raise ValueError("Duplicate share indexes found")
 
     secret_int = _lagrange_interpolate_zero(shares, PRIME)
     return _int_to_bytes(secret_int, secret_length)
+
+
+# app/crypto/shamir.py - ДОБАВИТЬ В КОНЕЦ ФАЙЛА
+
+def verify_shares(shares: Sequence[Share], k: int, prime: int = PRIME) -> bool:
+    """
+    Проверяет, что доли могут быть восстановлены в секрет.
+
+    Args:
+        shares: Список долей (x, y)
+        k: Пороговое количество долей
+        prime: Простое число для поля
+
+    Returns:
+        True если доли валидны, False в противном случае
+    """
+    if len(shares) < k:
+        return False
+
+    # Проверяем уникальность x-координат
+    xs = [x for x, _ in shares]
+    if len(xs) != len(set(xs)):
+        return False
+
+    # Берём первые k долей
+    test_shares = shares[:k]
+
+    # Для каждой оставшейся доли проверяем, лежит ли она на том же полиноме
+    # Реконструируем полином через интерполяцию Лагранжа
+    for i in range(k, len(shares)):
+        x_i, y_i = shares[i]
+
+        # Вычисляем ожидаемое значение y для x_i через интерполяцию
+        expected_y = 0
+        for j, (x_j, y_j) in enumerate(test_shares):
+            # Вычисляем коэффициент Лагранжа для точки x_i
+            numerator = 1
+            denominator = 1
+
+            for m, (x_m, _) in enumerate(test_shares):
+                if m == j:
+                    continue
+                numerator = (numerator * (x_i - x_m)) % prime
+                denominator = (denominator * (x_j - x_m)) % prime
+
+            lagrange_coeff = numerator * pow(denominator, -1, prime)
+            expected_y = (expected_y + y_j * lagrange_coeff) % prime
+
+        if expected_y != y_i:
+            return False
+
+    return True

@@ -1,90 +1,327 @@
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 
 from app.services.vault_service import create_vault, open_vault
-from app.services.secret_service import create_secret, read_secret
 from app.storage.repository import get_vault_by_name, get_secrets
-from tkinter import filedialog
 from app.services.backup_service import export_vault, import_vault
-
 from app.gui.dialogs import CreateVaultDialog, AddSecretDialog
 from app.services.secret_service import (
     create_secret,
     read_secret,
     remove_secret,
     edit_secret,
+    search_secrets,
 )
+from app.gui.access_dialog import AccessDialog
+
 
 class MainWindow(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Local Vault")
-        self.geometry("1000x600")
+        self.geometry("1200x650")
 
-        # фикс поднятия окна наверх
-        self.attributes('-topmost', True)
-        self.after(100, lambda: self.attributes('-topmost', False))
+        self.attributes("-topmost", True)
+        self.after(100, lambda: self.attributes("-topmost", False))
 
         self.current_vault_id = None
         self.current_vault_name = None
         self.current_master_key = None
+        self.current_user_id = None
+
+        # Для поиска
+        self.current_search_term = ""
+        self.all_secrets_cache = []  # Кэш всех секретов
 
         self.inactivity_seconds = 0
-        self.inactivity_limit = 300  # 5 минут
+        self.inactivity_limit = 300
         self._after_id = None
 
         self._build_ui()
-
         self._bind_activity()
         self._start_inactivity_timer()
 
+    # ======================
+    # UI
+    # ======================
+
     def _build_ui(self):
-        top_frame = ttk.Frame(self, padding=10)
+        # Главный контейнер
+        main_container = ttk.Frame(self)
+        main_container.pack(fill="both", expand=True)
+
+        # Верхняя панель с кнопками
+        top_frame = ttk.Frame(main_container, padding=10)
         top_frame.pack(fill="x")
 
-        ttk.Button(top_frame, text="Создать vault", command=self.create_vault_dialog).pack(side="left", padx=5)
-        ttk.Button(top_frame, text="Открыть vault", command=self.open_vault_dialog).pack(side="left", padx=5)
-        ttk.Button(top_frame, text="Добавить секрет", command=self.add_secret_dialog).pack(side="left", padx=5)
-        ttk.Button(top_frame, text="Обновить список", command=self.refresh_secrets).pack(side="left", padx=5)
-        ttk.Button(top_frame, text="Показать секрет", command=self.show_selected_secret).pack(side="left", padx=5)
-        ttk.Button(top_frame, text="Закрыть vault", command=self.lock_vault).pack(side="left", padx=5)
-        ttk.Button(top_frame, text="Редактировать", command=self.edit_secret_dialog).pack(side="left", padx=5)
-        ttk.Button(top_frame, text="Удалить", command=self.delete_secret).pack(side="left", padx=5)
-        ttk.Button(top_frame, text="Экспорт", command=self.export_vault_dialog).pack(side="left", padx=5)
-        ttk.Button(top_frame, text="Импорт", command=self.import_vault_dialog).pack(side="left", padx=5)
+        # Первая строка кнопок
+        button_frame1 = ttk.Frame(top_frame)
+        button_frame1.pack(fill="x", pady=2)
 
+        buttons1 = [
+            ("Создать vault", self.create_vault_dialog),
+            ("Открыть vault", self.open_vault_dialog),
+            ("Добавить секрет", self.add_secret_dialog),
+            ("Обновить список", self.refresh_secrets),
+            ("Показать секрет", self.show_selected_secret),
+            ("Закрыть vault", self.lock_vault),
+        ]
+
+        for text, command in buttons1:
+            ttk.Button(button_frame1, text=text, command=command).pack(side="left", padx=2)
+
+        # Вторая строка кнопок
+        button_frame2 = ttk.Frame(top_frame)
+        button_frame2.pack(fill="x", pady=2)
+
+        buttons2 = [
+            ("Редактировать", self.edit_secret_dialog),
+            ("Удалить", self.delete_secret),
+            ("Экспорт", self.export_vault_dialog),
+            ("Импорт", self.import_vault_dialog),
+            ("История версий", self.show_history),
+            ("Управление доступом", self.open_access_dialog),
+        ]
+
+        for text, command in buttons2:
+            ttk.Button(button_frame2, text=text, command=command).pack(side="left", padx=2)
+
+        # Третья строка кнопок (новая)
+        button_frame3 = ttk.Frame(top_frame)
+        button_frame3.pack(fill="x", pady=2)
+
+        buttons3 = [
+            ("🔐 Настройка восстановления", self.setup_recovery),
+            ("🔍 Проверить целостность", self.check_integrity),
+        ]
+
+        for text, command in buttons3:
+            ttk.Button(button_frame3, text=text, command=command).pack(side="left", padx=2)
+
+        # Панель поиска
+        search_frame = ttk.LabelFrame(top_frame, text="Поиск и фильтры", padding=5)
+        search_frame.pack(fill="x", pady=5)
+
+        # Строка поиска
+        entry_frame = ttk.Frame(search_frame)
+        entry_frame.pack(fill="x", pady=2)
+
+        ttk.Label(entry_frame, text="🔍", font=("", 12)).pack(side="left", padx=5)
+
+        self.search_var = tk.StringVar()
+        self.search_var.trace('w', self.on_search)
+
+        self.search_entry = ttk.Entry(entry_frame, textvariable=self.search_var, font=("", 10))
+        self.search_entry.pack(side="left", fill="x", expand=True, padx=5)
+
+        ttk.Button(entry_frame, text="✖ Очистить", width=10, command=self.clear_search).pack(side="right", padx=5)
+
+        # Фильтры
+        filter_frame = ttk.Frame(search_frame)
+        filter_frame.pack(fill="x", pady=5)
+
+        ttk.Label(filter_frame, text="Фильтровать по:").pack(side="left", padx=5)
+
+        self.filter_var = tk.StringVar(value="all")
+        filters = [
+            ("Всем полям", "all"),
+            ("Логину", "login"),
+            ("URL", "url"),
+            ("Заметкам", "note"),
+        ]
+
+        for text, value in filters:
+            ttk.Radiobutton(
+                filter_frame,
+                text=text,
+                value=value,
+                variable=self.filter_var,
+                command=self.on_search
+            ).pack(side="left", padx=10)
+
+        # Статус поиска
+        self.search_status_var = tk.StringVar(value="")
+        status_label = ttk.Label(
+            search_frame,
+            textvariable=self.search_status_var,
+            foreground="gray",
+            font=("", 8)
+        )
+        status_label.pack(anchor="w", pady=2)
+
+        # Статус vault
         self.status_var = tk.StringVar(value="Vault не открыт")
-        ttk.Label(self, textvariable=self.status_var, padding=10).pack(fill="x")
+        ttk.Label(main_container, textvariable=self.status_var, padding=10,
+                  font=("", 9, "bold")).pack(fill="x")
 
-        table_frame = ttk.Frame(self, padding=10)
+        # Таблица секретов
+        table_frame = ttk.Frame(main_container, padding=10)
         table_frame.pack(fill="both", expand=True)
 
+        # Контейнер для таблицы со скроллбарами
+        tree_container = ttk.Frame(table_frame)
+        tree_container.pack(fill="both", expand=True)
+
+        # Настройка колонок
         columns = ("id", "name", "login", "url", "created_at")
-        self.tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=15)
+        self.tree = ttk.Treeview(tree_container, columns=columns, show="headings")
 
-        self.tree.heading("id", text="ID")
-        self.tree.heading("name", text="Название")
-        self.tree.heading("login", text="Логин")
-        self.tree.heading("url", text="URL")
-        self.tree.heading("created_at", text="Создан")
+        column_configs = {
+            "id": {"text": "ID", "width": 50},
+            "name": {"text": "Название", "width": 250},
+            "login": {"text": "Логин", "width": 180},
+            "url": {"text": "URL", "width": 300},
+            "created_at": {"text": "Создан", "width": 150},
+        }
 
-        self.tree.column("id", width=60, anchor="center")
-        self.tree.column("name", width=180)
-        self.tree.column("login", width=180)
-        self.tree.column("url", width=240)
-        self.tree.column("created_at", width=180)
+        for col, config in column_configs.items():
+            self.tree.heading(col, text=config["text"])
+            self.tree.column(col, width=config["width"], minwidth=50)
 
-        self.tree.pack(fill="both", expand=True)
+        # Вертикальный скроллбар
+        v_scrollbar = ttk.Scrollbar(tree_container, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=v_scrollbar.set)
 
-        self.details = tk.Text(self, height=8)
-        self.details.pack(fill="x", padx=10, pady=(0, 10))
+        # Горизонтальный скроллбар
+        h_scrollbar = ttk.Scrollbar(tree_container, orient="horizontal", command=self.tree.xview)
+        self.tree.configure(xscrollcommand=h_scrollbar.set)
+
+        # Упаковка
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        v_scrollbar.grid(row=0, column=1, sticky="ns")
+        h_scrollbar.grid(row=1, column=0, sticky="ew")
+
+        tree_container.grid_rowconfigure(0, weight=1)
+        tree_container.grid_columnconfigure(0, weight=1)
+
+        # Привязываем обработчик выбора
+        self.tree.bind("<<TreeviewSelect>>", lambda e: self.show_selected_secret())
+
+        # Область деталей
+        details_frame = ttk.LabelFrame(main_container, text="Детали секрета", padding=10)
+        details_frame.pack(fill="x", padx=10, pady=10)
+
+        self.details = tk.Text(details_frame, height=8, wrap="word", font=("Consolas", 10))
+        self.details.pack(fill="both", expand=True)
+
+        # Кнопка копирования пароля
+        copy_btn = ttk.Button(details_frame, text="📋 Копировать пароль", command=self.copy_password)
+        copy_btn.pack(pady=5)
+
+        # Подсказки
+        tip_label = ttk.Label(
+            main_container,
+            text="💡 Подсказка: Двойной клик по секрету показывает детали | Ctrl+F для поиска",
+            foreground="gray",
+            font=("", 8)
+        )
+        tip_label.pack(side="bottom", fill="x", padx=10, pady=5)
+
+        # Привязываем горячие клавиши
+        self.bind("<Control-f>", lambda e: self.search_entry.focus())
+        self.bind("<Control-F>", lambda e: self.search_entry.focus())
+        self.bind("<Escape>", lambda e: self.clear_search())
+
+    # ======================
+    # ПОИСК
+    # ======================
+
+    def on_search(self, *args):
+        """Выполняет поиск при вводе текста"""
+        search_term = self.search_var.get().strip()
+        self.current_search_term = search_term
+
+        if not self.current_vault_id:
+            return
+
+        if not search_term or len(search_term) < 2:
+            if len(search_term) == 1:
+                self.search_status_var.set("Введите минимум 2 символа для поиска")
+                return
+            self.search_status_var.set("")
+            self.refresh_secrets()
+            return
+
+        try:
+            # Выполняем поиск
+            results = search_secrets(self.current_vault_id, self.current_user_id, search_term)
+
+            # Применяем фильтр
+            filter_type = self.filter_var.get()
+            if filter_type != "all":
+                results = [r for r in results if r.get(filter_type)]
+
+            # Очищаем таблицу
+            for item in self.tree.get_children():
+                self.tree.delete(item)
+
+            # Показываем результаты
+            for secret in results:
+                self.tree.insert(
+                    "",
+                    "end",
+                    iid=str(secret["id"]),
+                    values=(
+                        secret["id"],
+                        secret["name"],
+                        self._highlight_term(secret.get("login", "")[:40]),
+                        self._highlight_term(secret.get("url", "")[:50]),
+                        secret.get("created_at", "")[:16],
+                    ),
+                )
+
+            count = len(results)
+            self.search_status_var.set(f"🔍 Найдено: {count} секретов по запросу '{search_term}'")
+
+            if count == 0:
+                self.details.delete("1.0", tk.END)
+                self.details.insert(tk.END, "Ничего не найдено.\nПопробуйте изменить поисковый запрос.")
+
+        except Exception as e:
+            self.search_status_var.set(f"Ошибка поиска: {str(e)}")
+
+    def clear_search(self):
+        """Очищает поле поиска"""
+        self.search_var.set("")
+        self.search_entry.focus()
+        self.current_search_term = ""
+        self.refresh_secrets()
+
+    def _highlight_term(self, text: str) -> str:
+        """Подсвечивает найденный термин (маркером)"""
+        if not self.current_search_term or len(self.current_search_term) < 2 or not text:
+            return text
+
+        term = self.current_search_term.lower()
+        text_lower = text.lower()
+
+        if term in text_lower:
+            return f"🔍 {text}"
+        return text
+
+    def copy_password(self):
+        """Копирует пароль из поля деталей в буфер обмена"""
+        selected = self.tree.selection()
+        if not selected:
+            messagebox.showwarning("Внимание", "Сначала выберите секрет", parent=self)
+            return
+
+        # Пароль в тексте после "Пароль: "
+        details_text = self.details.get("1.0", tk.END)
+        for line in details_text.split('\n'):
+            if line.startswith("Пароль:"):
+                password = line.replace("Пароль:", "").strip()
+                if password:
+                    self.clipboard_clear()
+                    self.clipboard_append(password)
+                    messagebox.showinfo("Скопировано", "Пароль скопирован в буфер обмена", parent=self)
+                return
 
     # ======================
     # VAULT
     # ======================
 
     def create_vault_dialog(self):
-        self._reset_inactivity_timer()
         dialog = CreateVaultDialog(self)
         self.wait_window(dialog)
 
@@ -94,74 +331,98 @@ class MainWindow(tk.Tk):
         name, password, n, k = dialog.result
 
         try:
-            create_vault(name, password, n=n, k=k)
+            create_vault(
+                name=name,
+                password=password,
+                n=n,
+                k=k,
+                owner_id=self.current_user_id
+            )
+
             vault = get_vault_by_name(name)
 
             self.current_vault_id = vault["id"]
             self.current_vault_name = name
             self.current_master_key = open_vault(name, password)
 
-            self.status_var.set(f"Vault открыт: {name}")
-            messagebox.showinfo("Успех", "Vault создан и открыт", parent=self)
-
+            self.status_var.set(f"✅ Vault открыт: {name}")
+            self.clear_search()
             self.refresh_secrets()
 
         except Exception as e:
             messagebox.showerror("Ошибка", str(e), parent=self)
 
+    # app/gui/main_window.py - измените метод open_vault_dialog:
+
     def open_vault_dialog(self):
-        # пока оставим простой вариант
-        self._reset_inactivity_timer()
         from tkinter import simpledialog
 
+        # Сначала просим имя vault
         name = simpledialog.askstring("Открыть vault", "Имя vault:", parent=self)
         if not name:
             return
 
-        password = simpledialog.askstring("Открыть vault", "Пароль:", show="*", parent=self)
+        vault = get_vault_by_name(name)
+        if not vault:
+            # Если vault не найден, спрашиваем про восстановление
+            if messagebox.askyesno("Vault не найден",
+                                   f"Vault '{name}' не найден.\n\n"
+                                   f"Хотите восстановить доступ из бэкапа?",
+                                   parent=self):
+                self.open_vault_with_recovery(name)
+            return
+
+        # Запрашиваем пароль
+        password = simpledialog.askstring("Открыть vault", f"Пароль для vault '{name}':",
+                                          show="*", parent=self)
+
         if not password:
             return
 
         try:
-            vault = get_vault_by_name(name)
-            if not vault:
-                raise ValueError("Vault не найден")
-
             self.current_master_key = open_vault(name, password)
             self.current_vault_id = vault["id"]
             self.current_vault_name = name
 
-            self.status_var.set(f"Vault открыт: {name}")
-            messagebox.showinfo("Успех", "Vault открыт", parent=self)
-
+            self.status_var.set(f"✅ Vault открыт: {name}")
+            self.clear_search()
             self.refresh_secrets()
 
         except Exception as e:
-            messagebox.showerror("Ошибка", str(e), parent=self)
+            # Если пароль неверный, предлагаем восстановление
+            if "Wrong password" in str(e) or "Too many attempts" in str(e):
+                if messagebox.askyesno("Ошибка входа",
+                                       f"{str(e)}\n\n"
+                                       f"Хотите восстановить доступ к vault '{name}'?\n\n"
+                                       f"Потребуется мастер-пароль или бэкап долей.",
+                                       parent=self):
+                    self.open_vault_with_recovery(name)
+            else:
+                messagebox.showerror("Ошибка", str(e), parent=self)
 
     def lock_vault(self):
         self.current_vault_id = None
         self.current_vault_name = None
         self.current_master_key = None
-        self.inactivity_seconds = 0
 
-        self.status_var.set("Vault не открыт")
+        self.status_var.set("🔒 Vault не открыт")
         self.details.delete("1.0", tk.END)
 
         for item in self.tree.get_children():
             self.tree.delete(item)
+
+        self.clear_search()
 
     # ======================
     # SECRETS
     # ======================
 
     def add_secret_dialog(self):
-        self._reset_inactivity_timer()
-        if self.current_vault_id is None:
-            messagebox.showwarning("Внимание", "Сначала открой vault", parent=self)
+        if not self.current_vault_id:
+            messagebox.showwarning("Внимание", "Сначала откройте vault", parent=self)
             return
 
-        dialog = AddSecretDialog(self)
+        dialog = AddSecretDialog(self, is_edit=False)
         self.wait_window(dialog)
 
         if not dialog.result:
@@ -173,6 +434,7 @@ class MainWindow(tk.Tk):
             create_secret(
                 vault_id=self.current_vault_id,
                 master_key=self.current_master_key,
+                user_id=self.current_user_id,
                 name=name,
                 login=login,
                 password=password,
@@ -180,24 +442,29 @@ class MainWindow(tk.Tk):
                 note=note,
             )
 
-            messagebox.showinfo("Успех", "Секрет добавлен", parent=self)
             self.refresh_secrets()
+            messagebox.showinfo("Успех", "Секрет добавлен", parent=self)
 
         except Exception as e:
             messagebox.showerror("Ошибка", str(e), parent=self)
 
     def refresh_secrets(self):
-        self._reset_inactivity_timer()
+        """Обновляет список секретов (с учётом активного поиска)"""
         for item in self.tree.get_children():
             self.tree.delete(item)
 
-        self.details.delete("1.0", tk.END)
-
-        if self.current_vault_id is None:
+        if not self.current_vault_id:
             return
 
         try:
+            # Если есть активный поиск, используем его
+            if self.current_search_term and len(self.current_search_term) >= 2:
+                self.on_search()
+                return
+
+            # Иначе показываем все секреты
             secrets = get_secrets(self.current_vault_id)
+            self.search_status_var.set(f"📁 Всего: {len(secrets)} секретов")
 
             for row in secrets:
                 self.tree.insert(
@@ -207,8 +474,8 @@ class MainWindow(tk.Tk):
                     values=(
                         row["id"],
                         row["name"],
-                        row["login"] or "",
-                        row["url"] or "",
+                        (row["login"] or "")[:40],
+                        (row["url"] or "")[:50],
                         row["created_at"],
                     ),
                 )
@@ -217,28 +484,34 @@ class MainWindow(tk.Tk):
             messagebox.showerror("Ошибка", str(e), parent=self)
 
     def show_selected_secret(self):
-        self._reset_inactivity_timer()
-        if self.current_master_key is None:
-            messagebox.showwarning("Внимание", "Сначала открой vault", parent=self)
-            return
-
         selected = self.tree.selection()
         if not selected:
-            messagebox.showwarning("Внимание", "Выбери секрет", parent=self)
             return
 
         secret_id = int(selected[0])
 
         try:
-            secret = read_secret(secret_id, self.current_master_key)
-
-            text = (
-                f"Название: {secret['name']}\n"
-                f"Логин: {secret['login']}\n"
-                f"Пароль: {secret['password']}\n"
-                f"URL: {secret['url']}\n"
-                f"Заметка: {secret['note']}\n"
+            secret = read_secret(
+                secret_id,
+                self.current_master_key,
+                self.current_user_id,
             )
+
+            text = f"""
+╔══════════════════════════════════════════════════════════╗
+║                    ИНФОРМАЦИЯ О СЕКРЕТЕ                  ║
+╠══════════════════════════════════════════════════════════╣
+║ Название:  {secret['name']}
+║ Логин:     {secret.get('login', '—')}
+║ Пароль:    {secret.get('password', '—')}
+║ URL:       {secret.get('url', '—')}
+║ Заметка:   {secret.get('note', '—')}
+╠══════════════════════════════════════════════════════════╣
+║ Создан:    {secret.get('created_at', '—')}
+║ Обновлён:  {secret.get('updated_at', '—')}
+║ Версия:    {secret.get('version', 1)}
+╚══════════════════════════════════════════════════════════╝
+            """
 
             self.details.delete("1.0", tk.END)
             self.details.insert(tk.END, text)
@@ -247,142 +520,358 @@ class MainWindow(tk.Tk):
             messagebox.showerror("Ошибка", str(e), parent=self)
 
     def delete_secret(self):
-        self._reset_inactivity_timer()
         selected = self.tree.selection()
         if not selected:
-            messagebox.showwarning("Внимание", "Выбери секрет", parent=self)
+            messagebox.showwarning("Внимание", "Выберите секрет для удаления", parent=self)
             return
 
         secret_id = int(selected[0])
 
-        confirm = messagebox.askyesno("Подтверждение", "Удалить секрет?", parent=self)
-        if not confirm:
+        # Подтверждение удаления
+        if not messagebox.askyesno("Подтверждение", "Удалить выбранный секрет?", parent=self):
             return
 
         try:
-            remove_secret(secret_id)
-            messagebox.showinfo("Успех", "Секрет удалён", parent=self)
+            remove_secret(
+                secret_id,
+                self.current_user_id,
+                self.current_vault_id,
+            )
             self.refresh_secrets()
+            self.details.delete("1.0", tk.END)
+            messagebox.showinfo("Успех", "Секрет удалён", parent=self)
+
         except Exception as e:
             messagebox.showerror("Ошибка", str(e), parent=self)
 
     def edit_secret_dialog(self):
-        self._reset_inactivity_timer()
         selected = self.tree.selection()
         if not selected:
-            messagebox.showwarning("Внимание", "Выбери секрет", parent=self)
-            return
-
-        if self.current_master_key is None:
-            messagebox.showwarning("Внимание", "Сначала открой vault", parent=self)
+            messagebox.showwarning("Внимание", "Выберите секрет для редактирования", parent=self)
             return
 
         secret_id = int(selected[0])
 
         try:
-            secret = read_secret(secret_id, self.current_master_key)
+            secret = read_secret(
+                secret_id,
+                self.current_master_key,
+                self.current_user_id,
+            )
         except Exception as e:
-            messagebox.showerror("Ошибка", str(e), parent=self)
+            messagebox.showerror("Ошибка", f"Не удалось прочитать секрет: {e}", parent=self)
             return
 
-        from app.gui.dialogs import AddSecretDialog
+        dialog = AddSecretDialog(self, is_edit=True)
 
-        dialog = AddSecretDialog(self)
-
-        # предзаполнение
         dialog.name_entry.insert(0, secret["name"])
-        dialog.login_entry.insert(0, secret["login"] or "")
-        dialog.password_entry.insert(0, secret["password"])
-        dialog.url_entry.insert(0, secret["url"] or "")
-        dialog.note_entry.insert(0, secret["note"] or "")
+        dialog.name_entry.configure(state="disabled")
+        dialog.login_entry.insert(0, secret.get("login") or "")
+        dialog.password_entry.insert(0, secret.get("password") or "")
+        dialog.url_entry.insert(0, secret.get("url") or "")
+        dialog.note_entry.insert(0, secret.get("note") or "")
 
         self.wait_window(dialog)
 
         if not dialog.result:
             return
 
-        name, login, password, url, note = dialog.result
+        _, login, password, url, note = dialog.result
+
+        if not password:
+            messagebox.showerror("Ошибка", "Пароль не может быть пустым", parent=self)
+            return
 
         try:
-            edit_secret(secret_id, self.current_master_key, login, password, url, note)
-            messagebox.showinfo("Успех", "Секрет обновлён", parent=self)
+            edit_secret(
+                secret_id,
+                self.current_master_key,
+                self.current_user_id,
+                self.current_vault_id,
+                login,
+                password,
+                url,
+                note,
+            )
+
             self.refresh_secrets()
+            self.details.delete("1.0", tk.END)
+            messagebox.showinfo("Успех", "Секрет обновлён", parent=self)
+
+        except Exception as e:
+            import traceback
+            error_details = traceback.format_exc()
+            with open("edit_error.txt", "w", encoding="utf-8") as f:
+                f.write(error_details)
+            messagebox.showerror(
+                "Ошибка",
+                f"Не удалось обновить секрет:\n{str(e)}",
+                parent=self
+            )
+
+    # ======================
+    # EXPORT / IMPORT
+    # ======================
+
+    def export_vault_dialog(self):
+        if not self.current_vault_id:
+            messagebox.showwarning("Внимание", "Сначала откройте vault", parent=self)
+            return
+
+        path = filedialog.asksaveasfilename(defaultextension=".vault")
+        if not path:
+            return
+
+        data = export_vault(
+            self.current_vault_id,
+            self.current_vault_name,
+            self.current_master_key,
+        )
+
+        with open(path, "wb") as f:
+            f.write(data)
+
+        messagebox.showinfo("Успех", f"Vault экспортирован в {path}", parent=self)
+
+    def import_vault_dialog(self):
+        if not self.current_vault_id:
+            messagebox.showwarning("Внимание", "Сначала откройте vault", parent=self)
+            return
+
+        path = filedialog.askopenfilename(filetypes=[("Vault files", "*.vault")])
+        if not path:
+            return
+
+        with open(path, "rb") as f:
+            data = f.read()
+
+        try:
+            import_vault(
+                self.current_vault_id,
+                self.current_vault_name,
+                self.current_master_key,
+                data,
+            )
+            self.refresh_secrets()
+            messagebox.showinfo("Успех", "Vault импортирован", parent=self)
         except Exception as e:
             messagebox.showerror("Ошибка", str(e), parent=self)
 
+    # ======================
+    # IDLE
+    # ======================
+
     def _bind_activity(self):
-        events = [
-            "<Motion>",
-            "<KeyPress>",
-            "<Button>",
-            "<ButtonRelease>",
-        ]
+        self.bind_all("<Motion>", self._reset_timer)
+        self.bind_all("<Key>", self._reset_timer)
 
-        for event in events:
-            self.bind_all(event, self._reset_inactivity_timer, add="+")
-
-    def _reset_inactivity_timer(self, event=None):
+    def _reset_timer(self, event=None):
         self.inactivity_seconds = 0
 
     def _start_inactivity_timer(self):
         self.inactivity_seconds += 1
 
-        if self.current_master_key is not None and self.inactivity_seconds >= self.inactivity_limit:
+        if self.inactivity_seconds >= self.inactivity_limit:
             self.lock_vault()
-            messagebox.showwarning(
-                "Автоблокировка",
-                "Vault заблокирован из-за бездействия.",
-                parent=self,
-            )
+            messagebox.showwarning("Автоблокировка", "Vault заблокирован из-за бездействия")
+
             self.inactivity_seconds = 0
             return
 
-        self._after_id = self.after(1000, self._start_inactivity_timer)
+        self.after(1000, self._start_inactivity_timer)
 
-    def export_vault_dialog(self):
-        if self.current_vault_id is None or self.current_master_key is None:
-            messagebox.showwarning("Внимание", "Сначала открой vault", parent=self)
+    # ======================
+    # ДИАЛОГИ
+    # ======================
+
+    def open_access_dialog(self):
+        if not self.current_vault_id:
+            messagebox.showwarning("Внимание", "Сначала откройте vault", parent=self)
+            return
+        AccessDialog(self, self.current_vault_id)
+
+    def show_history(self):
+        """Показывает историю версий выбранного секрета"""
+        selected = self.tree.selection()
+        if not selected:
+            messagebox.showwarning("Внимание", "Выберите секрет", parent=self)
             return
 
-        path = filedialog.asksaveasfilename(
-            parent=self,
-            title="Сохранить экспорт",
-            defaultextension=".vault",
-            filetypes=[("Vault files", "*.vault"), ("All files", "*.*")],
+        secret_id = int(selected[0])
+        secret_name = self.tree.item(selected[0])["values"][1]
+
+        from app.gui.history_dialog import HistoryDialog
+        HistoryDialog(
+            self,
+            secret_id,
+            secret_name,
+            self.current_master_key,
+            self.current_user_id,
+            self.current_vault_id
         )
-        if not path:
+
+    # app/gui/main_window.py - добавьте эти методы:
+
+    def setup_recovery(self):
+        """Настройка восстановления доступа"""
+        if not self.current_vault_id:
+            messagebox.showwarning("Внимание", "Сначала откройте vault", parent=self)
             return
+
+        from app.gui.recovery_dialog import RecoverySetupDialog
+        RecoverySetupDialog(
+            self,
+            self.current_vault_id,
+            self.current_vault_name,
+            self.current_master_key
+        )
+
+    def check_integrity(self):
+        """Проверка целостности vault"""
+        if not self.current_vault_id:
+            messagebox.showwarning("Внимание", "Сначала откройте vault", parent=self)
+            return
+
+        from app.crypto.integrity import IntegrityChecker
+        from app.storage.repository import log_integrity_check
+
+        checker = IntegrityChecker(self.current_master_key)
 
         try:
-            data = export_vault(self.current_vault_id, self.current_vault_name, self.current_master_key)
+            # Показываем прогресс
+            progress_dialog = tk.Toplevel(self)
+            progress_dialog.title("Проверка целостности")
+            progress_dialog.geometry("300x100")
+            progress_dialog.transient(self)
 
-            with open(path, "wb") as f:
-                f.write(data)
+            ttk.Label(progress_dialog, text="Проверка целостности данных...").pack(pady=20)
+            progress_bar = ttk.Progressbar(progress_dialog, mode="indeterminate")
+            progress_bar.pack(pady=10, padx=20, fill="x")
+            progress_bar.start()
 
-            messagebox.showinfo("Успех", "Vault экспортирован", parent=self)
+            self.update()
+
+            # Выполняем проверку
+            result = checker.check_vault_integrity(self.current_vault_id)
+
+            progress_bar.stop()
+            progress_dialog.destroy()
+
+            # Логируем результат
+            log_integrity_check(
+                self.current_vault_id,
+                result["status"],
+                len(result["issues"]),
+                str(result)
+            )
+
+            # Показываем результат
+            self._show_integrity_result(result)
+
         except Exception as e:
-            messagebox.showerror("Ошибка", str(e), parent=self)
+            messagebox.showerror("Ошибка", f"Ошибка проверки целостности: {str(e)}", parent=self)
 
-    def import_vault_dialog(self):
-        if self.current_vault_id is None or self.current_master_key is None:
-            messagebox.showwarning("Внимание", "Сначала открой vault", parent=self)
+    def _show_integrity_result(self, result: dict):
+        """Показывает результат проверки целостности"""
+        dialog = tk.Toplevel(self)
+        dialog.title("Результат проверки целостности")
+        dialog.geometry("600x400")
+
+        frame = ttk.Frame(dialog, padding=10)
+        frame.pack(fill="both", expand=True)
+
+        # Статус
+        status_color = "green" if result["status"] == "ok" else "red"
+        ttk.Label(frame, text=f"Статус: {result['status'].upper()}",
+                  foreground=status_color, font=("", 12, "bold")).pack(anchor="w")
+
+        # Статистика
+        stats_frame = ttk.LabelFrame(frame, text="Статистика", padding=10)
+        stats_frame.pack(fill="x", pady=10)
+
+        ttk.Label(stats_frame, text=f"Проверено секретов: {result['checked']['secrets']}").pack(anchor="w")
+        ttk.Label(stats_frame, text=f"Проверено долей: {result['checked']['shares']}").pack(anchor="w")
+
+        # Проблемы
+        if result["issues"]:
+            issues_frame = ttk.LabelFrame(frame, text="Обнаружены проблемы", padding=10)
+            issues_frame.pack(fill="both", expand=True, pady=10)
+
+            issues_text = tk.Text(issues_frame, height=10, wrap="word")
+            issues_text.pack(fill="both", expand=True)
+
+            for issue in result["issues"]:
+                if issue["type"] == "secret":
+                    issues_text.insert(tk.END, f"❌ Секрет #{issue['id']} '{issue['name']}': {issue['issue']}\n")
+                elif issue["type"] == "share":
+                    issues_text.insert(tk.END, f"❌ Доля #{issue['index']}: {issue['issue']}\n")
+                else:
+                    issues_text.insert(tk.END, f"❌ {issue.get('error', 'Неизвестная ошибка')}\n")
+
+            issues_text.configure(state="disabled")
+        else:
+            ttk.Label(frame, text="✅ Проблем не обнаружено. Все данные в порядке.",
+                      foreground="green", font=("", 10)).pack(pady=20)
+
+        ttk.Button(frame, text="Закрыть", command=dialog.destroy).pack(pady=10)
+
+    # app/gui/main_window.py - добавьте этот метод:
+
+    def open_vault_with_recovery(self, vault_name: str):
+        """Открывает диалог восстановления при неудачной попытке входа"""
+        from app.gui.recovery_dialog import RecoveryDialog
+        from app.services.vault_service import recover_vault_from_master_password, recover_vault_from_shares
+        from app.storage.repository import get_vault_by_name
+
+        dialog = RecoveryDialog(self, vault_name)
+        self.wait_window(dialog)
+
+        if not dialog.result:
             return
 
-        path = filedialog.askopenfilename(
-            parent=self,
-            title="Открыть экспорт",
-            filetypes=[("Vault files", "*.vault"), ("All files", "*.*")],
-        )
-        if not path:
+        method = dialog.result[0]
+        vault = get_vault_by_name(vault_name)
+
+        if not vault:
+            messagebox.showerror("Ошибка", f"Vault '{vault_name}' не найден", parent=self)
             return
 
         try:
-            with open(path, "rb") as f:
-                data = f.read()
+            if method == "master":
+                _, token, password = dialog.result
+                master_key = recover_vault_from_master_password(vault["id"], password, token)
 
-            import_vault(self.current_vault_id, self.current_vault_name, self.current_master_key, data)
+                if master_key:
+                    self.current_master_key = master_key
+                    self.current_vault_id = vault["id"]
+                    self.current_vault_name = vault_name
+                    self.status_var.set(f"✅ Vault восстановлен и открыт: {vault_name}")
+                    self.refresh_secrets()
+                    messagebox.showinfo(
+                        "Успех",
+                        "Доступ к vault восстановлен!\n"
+                        "Теперь вы можете использовать основной пароль для входа.",
+                        parent=self
+                    )
+                else:
+                    messagebox.showerror("Ошибка", "Не удалось восстановить доступ", parent=self)
 
-            messagebox.showinfo("Успех", "Vault импортирован", parent=self)
-            self.refresh_secrets()
+            elif method == "shares":
+                _, backup_path = dialog.result
+                success = recover_vault_from_shares(vault["id"], backup_path)
+
+                if success:
+                    # После восстановления долей, нужно открыть vault с основным паролем
+                    messagebox.showinfo(
+                        "Успех",
+                        "Доли успешно восстановлены!\n"
+                        "Теперь вы можете открыть vault с основным паролем.",
+                        parent=self
+                    )
+                    # Предлагаем открыть vault
+                    self.open_vault_dialog()
+                else:
+                    messagebox.showerror("Ошибка", "Не удалось восстановить доли", parent=self)
+
         except Exception as e:
             messagebox.showerror("Ошибка", str(e), parent=self)
