@@ -87,11 +87,6 @@ class AddSecretDialog(tk.Toplevel):
             ttk.Label(frame, text="(Название нельзя изменить при редактировании)",
                       foreground="gray").pack(anchor="w")
 
-        # Логин
-        ttk.Label(frame, text="Логин:").pack(anchor="w")
-        self.login_entry = ttk.Entry(frame)
-        self.login_entry.pack(fill="x", pady=5)
-
         # Пароль (с кнопкой генерации)
         ttk.Label(frame, text="Пароль:").pack(anchor="w")
 
@@ -120,7 +115,6 @@ class AddSecretDialog(tk.Toplevel):
     def on_submit(self):
         try:
             name = self.name_entry.get()
-            login = self.login_entry.get()
             password = self.password_entry.get()
             url = self.url_entry.get()
             note = self.note_entry.get()
@@ -131,7 +125,7 @@ class AddSecretDialog(tk.Toplevel):
             if not self.is_edit and not name:
                 raise ValueError("Название обязательно")
 
-            self.result = (name, login, password, url, note)
+            self.result = (name, password, url, note)
             self.destroy()
 
         except Exception as e:

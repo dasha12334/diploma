@@ -38,18 +38,16 @@ class SearchDialog(tk.Toplevel):
         result_frame.pack(fill="both", expand=True)
 
         # Таблица результатов
-        columns = ("id", "name", "login", "url", "updated_at")
+        columns = ("id", "name", "url", "updated_at")
         self.tree = ttk.Treeview(result_frame, columns=columns, show="headings", height=20)
 
         self.tree.heading("id", text="ID")
         self.tree.heading("name", text="Название")
-        self.tree.heading("login", text="Логин")
         self.tree.heading("url", text="URL")
         self.tree.heading("updated_at", text="Обновлён")
 
         self.tree.column("id", width=50)
         self.tree.column("name", width=200)
-        self.tree.column("login", width=150)
         self.tree.column("url", width=200)
         self.tree.column("updated_at", width=150)
 
@@ -103,7 +101,6 @@ class SearchDialog(tk.Toplevel):
                     values=(
                         secret["id"],
                         secret["name"],
-                        secret["login"][:30] if secret["login"] else "",
                         secret["url"][:40] if secret["url"] else "",
                         secret["updated_at"][:16] if secret["updated_at"] else "",
                     ),

@@ -87,7 +87,6 @@ def get_shares(vault_id: int) -> List[dict]:
 def add_secret(
         vault_id: int,
         name: str,
-        login: str | None,
         url: str | None,
         note: str | None,
         encrypted_secret: bytes,
@@ -102,12 +101,12 @@ def add_secret(
 
     cursor.execute(
         """
-        INSERT INTO secrets (vault_id, name, login, url, note, 
+        INSERT INTO secrets (vault_id, name, url, note, 
                              encrypted_secret, encrypted_data_key, 
                              integrity_hash, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (vault_id, name, login, url, note,
+        (vault_id, name, url, note,
          encrypted_secret, encrypted_data_key,
          integrity_hash, now, now),
     )
@@ -122,7 +121,6 @@ def update_secret(
     secret_id: int,
     encrypted_secret: bytes,
     encrypted_data_key: bytes,
-    login: str | None,
     url: str | None,
     note: str | None,
     integrity_hash: str = None,  # 🔥 НОВЫЙ ПАРАМЕТР
@@ -138,14 +136,13 @@ def update_secret(
         UPDATE secrets
         SET encrypted_secret = ?,
             encrypted_data_key = ?,
-            login = ?,
             url = ?,
             note = ?,
             integrity_hash = ?,
             updated_at = ?
         WHERE id = ?
         """,
-        (encrypted_secret, encrypted_data_key, login, url, note,
+        (encrypted_secret, encrypted_data_key, url, note,
          integrity_hash, now, secret_id),
     )
 
@@ -160,7 +157,7 @@ def get_secrets(vault_id: int) -> List[dict]:
 
     cursor.execute(
         """
-        SELECT id, vault_id, name, login, url, note, 
+        SELECT id, vault_id, name, url, note, 
                encrypted_secret, encrypted_data_key, 
                integrity_hash, created_at, updated_at
         FROM secrets
@@ -182,7 +179,7 @@ def get_secret_by_id(secret_id: int) -> Optional[dict]:
 
     cursor.execute(
         """
-        SELECT id, vault_id, name, login, url, note, 
+        SELECT id, vault_id, name, url, note, 
                encrypted_secret, encrypted_data_key,
                integrity_hash, created_at, updated_at
         FROM secrets
@@ -391,7 +388,6 @@ def save_secret_version(
     version: int,
     encrypted_secret: bytes,
     encrypted_data_key: bytes,
-    login: str | None,
     url: str | None,
     note: str | None,
 ) -> None:
@@ -403,12 +399,12 @@ def save_secret_version(
         """
         INSERT INTO secret_versions (
             secret_id, version, encrypted_secret, encrypted_data_key, 
-            login, url, note, created_at
+            url, note, created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         (secret_id, version, encrypted_secret, encrypted_data_key,
-         login, url, note, datetime.utcnow().isoformat()),
+         url, note, datetime.utcnow().isoformat()),
     )
 
     conn.commit()
@@ -440,7 +436,7 @@ def get_secret_versions(secret_id: int) -> List[dict]:
 
     cursor.execute(
         """
-        SELECT id, version, login, url, note, created_at
+        SELECT id, version, url, note, created_at
         FROM secret_versions
         WHERE secret_id = ?
         ORDER BY version DESC
@@ -499,47 +495,25 @@ def cleanup_old_versions(secret_id: int, keep_versions: int = 10) -> None:
 # app/storage/repository.py - добавим функции поиска
 
 def search_secrets(vault_id: int, search_term: str) -> List[dict]:
-    """
-    Поиск секретов по названию, логину или URL.
-
-    Args:
-        vault_id: ID хранилища
-        search_term: поисковый запрос
-
-    Returns:
-        Список найденных секретов
-    """
     conn = get_connection()
     cursor = conn.cursor()
-
-    # Поиск по частичному совпадению (без учёта регистра)
     query = """
-            SELECT id, \
-                   vault_id, \
-                   name, \
-                   login, \
-                   url, \
-                   note,
-                   encrypted_secret, \
-                   encrypted_data_key, \
-                   created_at, \
-                   updated_at
-            FROM secrets
-            WHERE vault_id = ?
-              AND (
-                LOWER(name) LIKE LOWER(?)
-                    OR LOWER(login) LIKE LOWER(?)
-                    OR LOWER(url) LIKE LOWER(?)
-                    OR LOWER(note) LIKE LOWER(?)
-                )
-            ORDER BY name ASC \
-            """
-
+        SELECT id, vault_id, name, url, note,
+               encrypted_secret, encrypted_data_key,
+               created_at, updated_at
+        FROM secrets
+        WHERE vault_id = ?
+          AND (
+            LOWER(name) LIKE LOWER(?)
+            OR LOWER(url) LIKE LOWER(?)
+            OR LOWER(note) LIKE LOWER(?)
+          )
+        ORDER BY name ASC
+    """
     search_pattern = f"%{search_term}%"
-    cursor.execute(query, (vault_id, search_pattern, search_pattern, search_pattern, search_pattern))
+    cursor.execute(query, (vault_id, search_pattern, search_pattern, search_pattern))  # всего 4 значения
     rows = cursor.fetchall()
     conn.close()
-
     return [dict(row) for row in rows]
 
 
@@ -557,7 +531,6 @@ def get_secrets_by_category(vault_id: int, category: str = None) -> List[dict]:
             SELECT id,
                    vault_id,
                    name,
-                   login,
                    url,
                    note,
                    encrypted_secret,
@@ -577,7 +550,6 @@ def get_secrets_by_category(vault_id: int, category: str = None) -> List[dict]:
             SELECT id,
                    vault_id,
                    name,
-                   login,
                    url,
                    note,
                    encrypted_secret,

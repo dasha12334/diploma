@@ -24,42 +24,34 @@ class HistoryDialog(tk.Toplevel):
         self._load_history()
 
     def _build_ui(self):
-        # Основной фрейм
         main_frame = ttk.Frame(self, padding=10)
         main_frame.pack(fill="both", expand=True)
 
-        # Таблица с версиями
-        columns = ("version", "login", "url", "created_at")
-        self.tree = ttk.Treeview(main_frame, columns=columns, show="headings", height=15)
+        # Левый фрейм – таблица со скроллбаром
+        left_frame = ttk.Frame(main_frame)
+        left_frame.pack(side="left", fill="both", expand=True)
 
+        columns = ("version", "url", "created_at")
+        self.tree = ttk.Treeview(left_frame, columns=columns, show="headings", height=15)
         self.tree.heading("version", text="Версия")
-        self.tree.heading("login", text="Логин")
         self.tree.heading("url", text="URL")
         self.tree.heading("created_at", text="Дата создания")
-
         self.tree.column("version", width=80)
-        self.tree.column("login", width=150)
         self.tree.column("url", width=200)
         self.tree.column("created_at", width=150)
 
-        # Скроллбар
-        scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=self.tree.yview)
+        scrollbar = ttk.Scrollbar(left_frame, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrollbar.set)
-
-        # Упаковываем
         self.tree.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
-        # Кнопки
-        button_frame = ttk.Frame(main_frame)
-        button_frame.pack(fill="x", pady=10)
+        # Правый фрейм – кнопки вертикально
+        right_frame = ttk.Frame(main_frame)
+        right_frame.pack(side="right", fill="y", padx=(10, 0))
 
-        ttk.Button(button_frame, text="Показать версию",
-                   command=self._show_version).pack(side="left", padx=5)
-        ttk.Button(button_frame, text="Откатить к версии",
-                   command=self._rollback_version).pack(side="left", padx=5)
-        ttk.Button(button_frame, text="Закрыть",
-                   command=self.destroy).pack(side="right", padx=5)
+        ttk.Button(right_frame, text="Показать версию", command=self._show_version).pack(fill="x", pady=5)
+        ttk.Button(right_frame, text="Откатить к версии", command=self._rollback_version).pack(fill="x", pady=5)
+        ttk.Button(right_frame, text="Закрыть", command=self.destroy).pack(fill="x", pady=5)
 
     def _load_history(self):
         """Загружает историю версий"""
@@ -72,7 +64,6 @@ class HistoryDialog(tk.Toplevel):
                     "end",
                     values=(
                         version["version"],
-                        version["login"][:30] if version["login"] else "",
                         version["url"][:50] if version["url"] else "",
                         version["created_at"],
                     ),
@@ -157,7 +148,6 @@ class HistoryDialog(tk.Toplevel):
         info = f"""
 Название: {secret['name']}
 Версия: {version}
-Логин: {secret.get('login', '')}
 Пароль: {secret.get('password', '')}
 URL: {secret.get('url', '')}
 Заметка: {secret.get('note', '')}

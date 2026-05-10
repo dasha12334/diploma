@@ -19,7 +19,6 @@ def export_vault(vault_id: int, vault_name: str, master_key: bytes) -> bytes:
             {
                 "id": item["id"],
                 "name": item["name"],
-                "login": item.get("login"),
                 "url": item.get("url"),
                 "note": item.get("note"),
                 "encrypted_secret": item["encrypted_secret"].hex(),
@@ -83,7 +82,6 @@ def import_vault(vault_id: int, vault_name: str, master_key: bytes, data: bytes)
         add_secret(
             vault_id=vault_id,
             name=item["name"],
-            login=item.get("login"),
             url=item.get("url"),
             note=item.get("note"),
             encrypted_secret=encrypted_secret,

@@ -38,7 +38,6 @@ CREATE TABLE IF NOT EXISTS secrets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     vault_id INTEGER NOT NULL,
     name TEXT NOT NULL,
-    login TEXT,
     url TEXT,
     note TEXT,
     encrypted_secret BLOB NOT NULL,
@@ -56,7 +55,6 @@ CREATE TABLE IF NOT EXISTS secrets_temp (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     vault_id INTEGER NOT NULL,
     name TEXT NOT NULL,
-    login TEXT,
     url TEXT,
     note TEXT,
     encrypted_secret BLOB NOT NULL,
@@ -69,7 +67,7 @@ CREATE TABLE IF NOT EXISTS secrets_temp (
 
 -- Копируем данные из старой таблицы
 INSERT OR IGNORE INTO secrets_temp
-SELECT id, vault_id, name, login, url, note, encrypted_secret, encrypted_data_key,
+SELECT id, vault_id, name, url, note, encrypted_secret, encrypted_data_key,
        NULL, created_at, updated_at
 FROM secrets;
 
@@ -106,7 +104,6 @@ CREATE TABLE IF NOT EXISTS secret_versions (
     version INTEGER NOT NULL,
     encrypted_secret BLOB NOT NULL,
     encrypted_data_key BLOB NOT NULL,
-    login TEXT,
     url TEXT,
     note TEXT,
     created_at TEXT NOT NULL,
