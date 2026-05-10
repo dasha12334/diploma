@@ -24,50 +24,87 @@ class SecretDetailsDialog(tk.Toplevel):
     def __init__(self, parent, secret: dict):
         super().__init__(parent)
         self.title(f"Детали секрета: {secret['name']}")
-        self.geometry("500x450")
-        self.resizable(False, False)
+        self.geometry("650x550")
+        self.resizable(True, True)
         self.secret = secret
 
-        frame = ttk.Frame(self, padding=15)
-        frame.pack(fill="both", expand=True)
+        main_frame = ttk.Frame(self, padding=10)
+        main_frame.pack(fill="both", expand=True)
 
-        # Заполнение информацией
-        info_text = f"""
-╔══════════════════════════════════════════════════════════╗
-║                    ИНФОРМАЦИЯ О СЕКРЕТЕ                  ║
-╠══════════════════════════════════════════════════════════╣
-║ Название:  {secret['name']}
-║ Секрет:    {secret.get('password', '—')}
-║ URL:       {secret.get('url', '—')}
-║ Заметка:   {secret.get('note', '—')}
-╠══════════════════════════════════════════════════════════╣
-║ Создан:    {secret.get('created_at', '—')}
-║ Обновлён:  {secret.get('updated_at', '—')}
-║ Версия:    {secret.get('version', 1)}
-╚══════════════════════════════════════════════════════════╝
-        """
-        text_widget = tk.Text(frame, wrap="word", font=("Consolas", 10))
-        text_widget.pack(fill="both", expand=True)
-        text_widget.insert("1.0", info_text)
-        text_widget.configure(state="disabled")
+        # ---- Верхняя панель: метаданные ----
+        info_frame = ttk.LabelFrame(main_frame, text="Информация", padding=10)
+        info_frame.pack(fill="x", pady=(0, 10))
 
-        # Кнопка копирования пароля
-        btn_frame = ttk.Frame(frame)
-        btn_frame.pack(fill="x", pady=10)
-        ttk.Button(btn_frame, text="📋 Копировать пароль",
-                   command=self._copy_password).pack(side="left", padx=5)
+        # Используем grid для аккуратного выравнивания
+        grid_frame = ttk.Frame(info_frame)
+        grid_frame.pack(fill="x")
+
+        row = 0
+        ttk.Label(grid_frame, text="Название:", font=("", 10, "bold")).grid(row=row, column=0, sticky="w", padx=5, pady=2)
+        ttk.Label(grid_frame, text=secret['name']).grid(row=row, column=1, sticky="w", padx=5, pady=2)
+        row += 1
+
+        ttk.Label(grid_frame, text="URL:", font=("", 10, "bold")).grid(row=row, column=0, sticky="w", padx=5, pady=2)
+        ttk.Label(grid_frame, text=secret.get('url', '—')).grid(row=row, column=1, sticky="w", padx=5, pady=2)
+        row += 1
+
+        ttk.Label(grid_frame, text="Заметка:", font=("", 10, "bold")).grid(row=row, column=0, sticky="w", padx=5, pady=2)
+        ttk.Label(grid_frame, text=secret.get('note', '—')).grid(row=row, column=1, sticky="w", padx=5, pady=2)
+        row += 1
+
+        ttk.Label(grid_frame, text="Создан:", font=("", 10, "bold")).grid(row=row, column=0, sticky="w", padx=5, pady=2)
+        ttk.Label(grid_frame, text=secret.get('created_at', '—')).grid(row=row, column=1, sticky="w", padx=5, pady=2)
+        row += 1
+
+        ttk.Label(grid_frame, text="Обновлён:", font=("", 10, "bold")).grid(row=row, column=0, sticky="w", padx=5, pady=2)
+        ttk.Label(grid_frame, text=secret.get('updated_at', '—')).grid(row=row, column=1, sticky="w", padx=5, pady=2)
+        row += 1
+
+        ttk.Label(grid_frame, text="Версия:", font=("", 10, "bold")).grid(row=row, column=0, sticky="w", padx=5, pady=2)
+        ttk.Label(grid_frame, text=str(secret.get('version', 1))).grid(row=row, column=1, sticky="w", padx=5, pady=2)
+
+        # ---- Нижняя панель: секрет ----
+        secret_frame = ttk.LabelFrame(main_frame, text="Секрет", padding=10)
+        secret_frame.pack(fill="both", expand=True)
+
+        # Текстовое поле для секрета (с возможностью выделения)
+        self.secret_text = tk.Text(secret_frame, wrap=tk.WORD, font=("Consolas", 10), height=12)
+        self.secret_text.pack(fill="both", expand=True)
+        self.secret_text.insert("1.0", secret.get('password', ''))
+        # Делаем поле доступным для выделения, но запрещаем редактирование
+        self.secret_text.configure(state="normal")
+        self.secret_text.bind("<Key>", lambda e: "break")   # блокируем ввод
+        # Добавляем поддержку Ctrl+A и Ctrl+C
+        self.secret_text.bind("<Control-a>", self._select_all)
+        self.secret_text.bind("<Control-A>", self._select_all)
+        self.secret_text.bind("<Control-c>", self._copy_secret)
+        self.secret_text.bind("<Control-C>", self._copy_secret)
+
+        # Кнопка копирования
+        btn_frame = ttk.Frame(secret_frame)
+        btn_frame.pack(fill="x", pady=(10, 0))
+        ttk.Button(btn_frame, text="📋 Копировать секрет", command=self._copy_secret).pack(side="left", padx=5)
         ttk.Button(btn_frame, text="Закрыть", command=self.destroy).pack(side="right", padx=5)
 
-        # Центрирование
+        # Центрирование окна
         self.update_idletasks()
         x = (self.winfo_screenwidth() // 2) - (self.winfo_width() // 2)
         y = (self.winfo_screenheight() // 2) - (self.winfo_height() // 2)
         self.geometry(f"+{x}+{y}")
 
-    def _copy_password(self):
-        self.clipboard_clear()
-        self.clipboard_append(self.secret.get('password', ''))
-        messagebox.showinfo("Скопировано", "Пароль скопирован в буфер обмена", parent=self)
+    def _select_all(self, event=None):
+        """Выделить весь текст в поле секрета"""
+        self.secret_text.tag_add("sel", "1.0", "end")
+        return "break"
+
+    def _copy_secret(self, event=None):
+        """Копировать содержимое поля секрета в буфер обмена"""
+        content = self.secret_text.get("1.0", tk.END).strip()
+        if content:
+            self.clipboard_clear()
+            self.clipboard_append(content)
+            messagebox.showinfo("Скопировано", "Секрет скопирован в буфер обмена", parent=self)
+        return "break"
 
 
 class MainWindow(tk.Tk):
@@ -164,6 +201,20 @@ class MainWindow(tk.Tk):
         # Колонки: без "actions"
         columns = ("name", "url", "created_at")
         self.tree = ttk.Treeview(tree_container, columns=columns, show="headings")
+        self.tree.tag_configure("even", background="#ffffff")
+        self.tree.tag_configure("odd", background="#f0f0f0")
+        # ---- Настройка стиля таблицы ----
+        style = ttk.Style()
+        style.configure("Treeview",
+                        rowheight=25,  # высота строки
+                        borderwidth=1,
+                        relief="solid",
+                        font=('TkDefaultFont', 9))
+        style.configure("Treeview.Heading",
+                        font=('TkDefaultFont', 10, 'bold'),
+                        borderwidth=1)
+        # Цвет выделения строки
+        style.map("Treeview", background=[('selected', '#347083')], foreground=[('selected', 'white')])
         self.tree.heading("name", text="Название")
         self.tree.heading("url", text="URL")
         self.tree.heading("created_at", text="Создан")
@@ -232,13 +283,13 @@ class MainWindow(tk.Tk):
                 results = [r for r in results if r.get(filter_type)]
             for item in self.tree.get_children():
                 self.tree.delete(item)
-            for sec in results:
-                # Внутри on_search, при вставке результатов:
+            for idx, sec in enumerate(results):
+                tag = "even" if idx % 2 == 0 else "odd"
                 self.tree.insert("", "end", iid=str(sec["id"]),
                                  values=(sec["name"],
                                          sec.get("url", "")[:50],
-                                         sec.get("created_at", "")[:16]))
-                # (без последнего элемента)
+                                         sec.get("created_at", "")[:16]),
+                                 tags=(tag,))
             self.search_status_var.set(f"🔍 Найдено: {len(results)}")
         except Exception as e:
             self.search_status_var.set(f"Ошибка: {e}")
@@ -359,13 +410,13 @@ class MainWindow(tk.Tk):
             return
         try:
             secrets = get_secrets(self.current_vault_id)
-            for row in secrets:
+            for idx, row in enumerate(secrets):
+                tag = "even" if idx % 2 == 0 else "odd"
                 self.tree.insert("", "end", iid=str(row["id"]), values=(
                     row["name"],
                     (row["url"] or "")[:50],
                     row["created_at"]
-                ))
-            # После обновления снимаем выделение → кнопки отключатся
+                ), tags=(tag,))
             self._on_secret_selected()
         except Exception as e:
             messagebox.showerror("Ошибка", str(e), parent=self)
@@ -389,7 +440,10 @@ class MainWindow(tk.Tk):
         dlg = AddSecretDialog(self, is_edit=True)
         dlg.name_entry.insert(0, secret["name"])
         dlg.name_entry.configure(state="disabled")
-        dlg.password_entry.insert(0, secret.get("password") or "")
+        dlg.set_secret(secret.get("password") or "")
+        if role == ROLE_USER:
+            dlg.password_entry.configure(state="disabled")
+            dlg.secret_text.configure(state="disabled")
         dlg.url_entry.insert(0, secret.get("url") or "")
         dlg.note_entry.insert(0, secret.get("note") or "")
 
