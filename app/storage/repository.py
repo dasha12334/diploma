@@ -662,3 +662,11 @@ def update_vault_password(vault_id: int, new_salt: bytes, new_verifier: bytes) -
 
     conn.commit()
     conn.close()
+
+def delete_shares(vault_id: int) -> None:
+    """Удаляет все доли vault"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM shares WHERE vault_id = ?", (vault_id,))
+    conn.commit()
+    conn.close()

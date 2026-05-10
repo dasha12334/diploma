@@ -15,6 +15,8 @@ from app.services.secret_service import (
     search_secrets,
 )
 from app.gui.access_dialog import AccessDialog
+from app.constants import ROLE_OWNER, ROLE_ADMIN, ROLE_USER, ROLE_VIEWER
+from app.services.access_service import can_manage_roles
 
 
 class SecretDetailsDialog(tk.Toplevel):
@@ -73,7 +75,6 @@ class MainWindow(tk.Tk):
         super().__init__()
         self.title("Local Vault")
         self.geometry("1300x700")
-
         self.attributes("-topmost", True)
         self.after(100, lambda: self.attributes("-topmost", False))
 
@@ -81,16 +82,19 @@ class MainWindow(tk.Tk):
         self.current_vault_name = None
         self.current_master_key = None
         self.current_user_id = None
+        self.current_username = None
 
-        # Для поиска
         self.current_search_term = ""
-
         self.inactivity_seconds = 0
         self.inactivity_limit = 300
 
         self._build_ui()
         self._bind_activity()
         self._start_inactivity_timer()
+
+        # Показываем диалог входа
+        self.withdraw()
+        self.after(10, self._show_login)  # небольшой таймаут для корректного отображения
 
     # ======================
     # UI
@@ -112,6 +116,7 @@ class MainWindow(tk.Tk):
             ("👥 Управление доступом", self.open_access_dialog),
             ("🔐 Настройка восстановления", self.setup_recovery),
             ("🔍 Проверить целостность", self.check_integrity),
+            ("🚪 Выйти", self.logout),  # новая кнопка
         ]
         for text, cmd in vault_buttons:
             ttk.Button(top_frame, text=text, command=cmd).pack(side="left", padx=4, pady=2)
@@ -203,10 +208,6 @@ class MainWindow(tk.Tk):
         # Статус
         self.status_var = tk.StringVar(value="Vault не открыт")
         ttk.Label(main_container, textvariable=self.status_var, padding=10, font=("", 9, "bold")).pack(fill="x")
-
-        # Подсказка
-        ttk.Label(main_container, text="💡 Ctrl+F – поиск | Двойной клик – показать секрет",
-                  foreground="gray", font=("", 8)).pack(side="bottom", fill="x", padx=10, pady=5)
 
         self.bind("<Control-f>", lambda e: self.search_entry.focus())
         self.bind("<Control-F>", lambda e: self.search_entry.focus())
@@ -375,28 +376,46 @@ class MainWindow(tk.Tk):
             messagebox.showwarning("Внимание", "Выберите секрет для редактирования", parent=self)
             return
         secret_id = int(sel[0])
+        role = self.get_current_user_role()
+        if role == ROLE_VIEWER:
+            messagebox.showwarning("Доступ запрещён", "Вы не можете редактировать секреты", parent=self)
+            return
         try:
             secret = read_secret(secret_id, self.current_master_key, self.current_user_id)
         except Exception as e:
             messagebox.showerror("Ошибка", f"Не удалось прочитать секрет: {e}", parent=self)
             return
+
         dlg = AddSecretDialog(self, is_edit=True)
         dlg.name_entry.insert(0, secret["name"])
         dlg.name_entry.configure(state="disabled")
         dlg.password_entry.insert(0, secret.get("password") or "")
         dlg.url_entry.insert(0, secret.get("url") or "")
         dlg.note_entry.insert(0, secret.get("note") or "")
+
+        if role == ROLE_USER:
+            # Блокируем поле пароля – пользователь не может его менять
+            dlg.password_entry.configure(state="disabled")
+
         self.wait_window(dlg)
         if not dlg.result:
             return
-        _, pwd, url, note = dlg.result
-        if not pwd:
+
+        _, new_password, url, note = dlg.result
+        if role == ROLE_USER:
+            # Для user игнорируем новый пароль, используем старый
+            password = secret["password"]
+        else:
+            password = new_password
+
+        if not password:
             messagebox.showerror("Ошибка", "Пароль не может быть пустым", parent=self)
             return
         try:
             edit_secret(secret_id, self.current_master_key, self.current_user_id, self.current_vault_id,
-                        pwd, url, note)
+                        password, url, note)
             self.refresh_secrets()
+            self.details.delete("1.0", tk.END)
             messagebox.showinfo("Успех", "Секрет обновлён", parent=self)
         except Exception as e:
             import traceback
@@ -442,7 +461,11 @@ class MainWindow(tk.Tk):
         if not self.current_vault_id:
             messagebox.showwarning("Внимание", "Сначала откройте vault", parent=self)
             return
-        AccessDialog(self, self.current_vault_id)
+        current_role = self.get_current_user_role()
+        if not current_role or not can_manage_roles(current_role):
+            messagebox.showwarning("Доступ запрещён", "У вас нет прав на управление доступом", parent=self)
+            return
+        AccessDialog(self, self.current_vault_id, current_role, self.current_user_id)
 
     def show_history(self):
         sel = self.tree.selection()
@@ -519,7 +542,11 @@ class MainWindow(tk.Tk):
     # ======================
     def open_vault_with_recovery(self, vault_name: str):
         from app.gui.recovery_dialog import RecoveryDialog
-        from app.services.vault_service import recover_vault_from_master_password, recover_vault_from_shares
+        from app.services.vault_service import recover_vault_from_master_password, recover_vault_from_shares, \
+            reset_vault_password
+        from app.storage.repository import get_vault_by_name
+        from tkinter import simpledialog
+
         dlg = RecoveryDialog(self, vault_name)
         self.wait_window(dlg)
         if not dlg.result:
@@ -534,19 +561,52 @@ class MainWindow(tk.Tk):
                 _, token, pwd = dlg.result
                 master_key = recover_vault_from_master_password(vault["id"], pwd, token)
                 if master_key:
+                    # Восстанавливаем доступ (открываем vault)
                     self.current_master_key = master_key
                     self.current_vault_id = vault["id"]
                     self.current_vault_name = vault_name
                     self.status_var.set(f"✅ Vault восстановлен и открыт: {vault_name}")
                     self.refresh_secrets()
-                    messagebox.showinfo("Успех", "Доступ восстановлен. Теперь вы можете использовать основной пароль.", parent=self)
+
+                    # Предложение сменить основной пароль
+                    if messagebox.askyesno(
+                            "Смена пароля",
+                            "Ваш основной пароль утерян. Хотите установить новый пароль для этого vault?",
+                            parent=self
+                    ):
+                        new_pwd = simpledialog.askstring("Новый пароль", "Введите новый пароль:", show="*", parent=self)
+                        if new_pwd:
+                            confirm = simpledialog.askstring("Подтверждение", "Повторите пароль:", show="*",
+                                                             parent=self)
+                            if new_pwd == confirm:
+                                try:
+                                    reset_vault_password(vault["id"], master_key, new_pwd, vault["n"], vault["k"])
+                                    messagebox.showinfo(
+                                        "Успех",
+                                        "Пароль успешно изменён! Теперь используйте новый пароль для входа.",
+                                        parent=self
+                                    )
+                                    # Переоткрываем vault с новым паролем (для обновления статуса)
+                                    self.lock_vault()
+                                    self.open_vault_dialog()
+                                except Exception as e:
+                                    messagebox.showerror("Ошибка", f"Не удалось сменить пароль: {e}", parent=self)
+                            else:
+                                messagebox.showerror("Ошибка", "Пароли не совпадают", parent=self)
+                    else:
+                        messagebox.showinfo(
+                            "Напоминание",
+                            "При следующем запуске для входа в этот vault потребуется снова использовать мастер-пароль.",
+                            parent=self
+                        )
                 else:
                     messagebox.showerror("Ошибка", "Не удалось восстановить доступ", parent=self)
             elif method == "shares":
                 _, backup_path = dlg.result
                 success = recover_vault_from_shares(vault["id"], backup_path)
                 if success:
-                    messagebox.showinfo("Успех", "Доли восстановлены. Теперь откройте vault основным паролем.", parent=self)
+                    messagebox.showinfo("Успех", "Доли восстановлены. Теперь откройте vault основным паролем.",
+                                        parent=self)
                     self.open_vault_dialog()
                 else:
                     messagebox.showerror("Ошибка", "Не удалось восстановить доли", parent=self)
@@ -594,3 +654,37 @@ class MainWindow(tk.Tk):
         self.btn_edit.config(state=state)
         self.btn_delete.config(state=state)
         self.btn_history.config(state=state)
+
+    def get_current_user_role(self):
+        if not self.current_vault_id or not self.current_user_id:
+            return None
+        from app.storage.repository import get_user_role
+        return get_user_role(self.current_user_id, self.current_vault_id)
+
+    def _show_login(self):
+        from app.gui.login_dialog import LoginDialog
+        login_dialog = LoginDialog(self)
+        self.wait_window(login_dialog)
+
+        if not login_dialog.user:
+            self.destroy()
+            return
+
+        self.current_user_id = login_dialog.user["id"]
+        self.current_username = login_dialog.user["username"]
+        print(f"Logged in as: {self.current_username}")
+
+        # После успешного входа показываем главное окно
+        self.deiconify()
+        # Сбрасываем состояние (vault закрыт, таблица пуста)
+        self.lock_vault()
+
+    def logout(self):
+        # Сбрасываем всё
+        self.lock_vault()
+        self.current_user_id = None
+        self.current_username = None
+        # Скрываем главное окно
+        self.withdraw()
+        # Показываем диалог входа заново
+        self._show_login()

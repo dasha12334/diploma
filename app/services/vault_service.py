@@ -245,3 +245,44 @@ def change_vault_password(vault_id: int, master_key: bytes, new_password: str) -
 
     raise NotImplementedError("Смена пароля требует перешифровки всех долей. "
                               "Пока что создайте новый vault и перенесите секреты.")
+
+def reset_vault_password(vault_id: int, master_key: bytes, new_password: str, n: int, k: int) -> None:
+    """
+    Сбрасывает пароль vault: удаляет старые доли и создаёт новые, зашифрованные новым паролем.
+    """
+    from app.storage.repository import delete_shares, add_share, update_vault_password, reset_failed_attempts, add_audit_event
+    from app.crypto.kdf import derive_key
+    from app.crypto.integrity import make_hmac
+    from app.crypto.aead import encrypt
+    from app.crypto.random import generate_salt
+    from app.crypto.shamir import split_secret
+    from app.utils.serialization import serialize_share
+
+    # 1. Удалить старые доли
+    delete_shares(vault_id)
+
+    # 2. Сгенерировать новую соль и ключ из нового пароля
+    new_salt = generate_salt()
+    new_password_key = derive_key(new_password, new_salt)
+    new_verifier = make_hmac(new_password_key, b"vault-verifier")
+
+    # 3. Разбить мастер-ключ на доли (используем те же n, k)
+    shares = split_secret(master_key, n=n, k=k)
+
+    # 4. Зашифровать и сохранить новые доли
+    for x, y in shares:
+        raw_share = serialize_share((x, y))
+        encrypted_share = encrypt(
+            raw_share,
+            new_password_key,
+            associated_data=f"{vault_id}:{x}".encode("utf-8")
+        )
+        add_share(vault_id, x, encrypted_share)
+
+    # 5. Обновить метаданные vault
+    update_vault_password(vault_id, new_salt, new_verifier)
+
+    # 6. Сбросить счётчик попыток входа
+    reset_failed_attempts(vault_id)
+
+    add_audit_event(vault_id, "password_reset", "Vault password changed via master password recovery")

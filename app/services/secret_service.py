@@ -20,7 +20,8 @@ from app.storage.repository import (
     search_secrets as db_search_secrets,
     update_secret_integrity,
 )
-from app.services.access_service import check_access
+from app.storage.repository import get_user_role
+from app.services.access_service import can_edit_secret, can_edit_metadata, check_access
 
 
 def _pack_secret_data(password, url, note) -> bytes:
@@ -107,43 +108,47 @@ def update_secret_logic(
         note: str | None,
 ) -> None:
     """Обновляет существующий секрет с сохранением версии и хеша целостности"""
-
     if not check_access(user_id, vault_id, "update"):
         raise PermissionError("Access denied")
 
-    # Получаем текущий секрет
+    role = get_user_role(user_id, vault_id)
+    if not can_edit_metadata(role):
+        raise PermissionError("You are not allowed to edit this secret")
+
+    # Если пользователь не может менять секрет (пароль), то оставляем старый
+    if not can_edit_secret(role):
+        current_row = get_secret_by_id(secret_id)
+        if not current_row:
+            raise ValueError("Secret not found")
+        # Расшифровываем старый пароль
+        old_data_key = decrypt(current_row["encrypted_data_key"], master_key)
+        old_raw = decrypt(current_row["encrypted_secret"], old_data_key)
+        old_data = json.loads(old_raw.decode("utf-8"))
+        password = old_data.get("password")   # подменяем новое значение старым
+
+    # Получаем текущий секрет для версионирования (без расшифровки)
     current = get_secret_by_id(secret_id)
     if not current:
         raise ValueError("Secret not found")
 
-    # Получаем номер новой версии
     latest_version = get_latest_version(secret_id)
     new_version = latest_version + 1
 
-    # Упаковываем новые данные
     raw = _pack_secret_data(password, url, note)
-
-    # Генерируем новый ключ для секрета
     data_key = generate_master_key()
-
-    # Шифруем
     encrypted_secret = encrypt(raw, data_key)
     encrypted_data_key = encrypt(data_key, master_key)
-
-    # 🔥 ВЫЧИСЛЯЕМ НОВЫЙ ХЕШ ЦЕЛОСТНОСТИ
     integrity_hash = compute_data_hash(encrypted_secret + encrypted_data_key)
 
-    # Обновляем текущую запись (нужно обновить db_update_secret в repository.py)
     db_update_secret(
         secret_id,
         encrypted_secret,
         encrypted_data_key,
         url,
         note,
-        integrity_hash,  # 🔥 НОВЫЙ ПАРАМЕТР
+        integrity_hash,
     )
 
-    # Сохраняем новую версию
     save_secret_version(
         secret_id=secret_id,
         version=new_version,
@@ -153,14 +158,8 @@ def update_secret_logic(
         note=note,
     )
 
-    # Очищаем старые версии (оставляем последние 10)
     cleanup_old_versions(secret_id, keep_versions=10)
-
-    add_audit_event(
-        vault_id,
-        "edit_secret",
-        f"Secret {secret_id} updated to version {new_version}"
-    )
+    add_audit_event(vault_id, "edit_secret", f"Secret {secret_id} updated to version {new_version}")
 
 
 def read_secret(secret_id: int, master_key: bytes, user_id: int, version: Optional[int] = None) -> dict:

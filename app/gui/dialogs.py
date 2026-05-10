@@ -19,6 +19,7 @@ class CreateVaultDialog(tk.Toplevel):
         self._build()
 
     def _build(self):
+        self.geometry("300x270")
         frame = ttk.Frame(self, padding=10)
         frame.pack(fill="both", expand=True)
 
@@ -40,7 +41,9 @@ class CreateVaultDialog(tk.Toplevel):
         self.k_entry.insert(0, "3")
         self.k_entry.pack(fill="x", pady=5)
 
-        ttk.Button(frame, text="Создать", command=self.on_submit).pack(pady=10)
+        ttk.Button(frame, text="Создать", command=self.on_submit).pack(
+            fill="x", pady=(10, 0)
+        )
 
     def on_submit(self):
         try:
@@ -63,7 +66,7 @@ class AddSecretDialog(tk.Toplevel):
     def __init__(self, parent, is_edit=False):
         super().__init__(parent)
         self.title("Редактировать секрет" if is_edit else "Добавить секрет")
-        self.geometry("400x450")
+        self.geometry("400x300")
         self.resizable(False, False)
 
         self.result = None
@@ -88,7 +91,7 @@ class AddSecretDialog(tk.Toplevel):
                       foreground="gray").pack(anchor="w")
 
         # Пароль (с кнопкой генерации)
-        ttk.Label(frame, text="Пароль:").pack(anchor="w")
+        ttk.Label(frame, text="Секрет:").pack(anchor="w")
 
         pass_frame = ttk.Frame(frame)
         pass_frame.pack(fill="x", pady=5)
