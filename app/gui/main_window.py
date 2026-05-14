@@ -169,7 +169,7 @@ class MainWindow(tk.Tk):
         self.search_var.trace('w', self.on_search)
         self.search_entry = ttk.Entry(entry_frame, textvariable=self.search_var, font=("", 10))
         self.search_entry.pack(side="left", fill="x", expand=True, padx=5)
-        ttk.Button(entry_frame, text="✖ Очистить", width=10, command=self.clear_search).pack(side="right", padx=5)
+        ttk.Button(entry_frame, text="✖", width=10, command=self.clear_search).pack(side="right", padx=5)
 
         filter_frame = ttk.Frame(search_frame)
         filter_frame.pack(fill="x", pady=5)

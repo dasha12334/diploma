@@ -78,41 +78,21 @@ def reconstruct_secret(shares: Sequence[Share], secret_length: int) -> bytes:
     secret_int = _lagrange_interpolate_zero(shares, PRIME)
     return _int_to_bytes(secret_int, secret_length)
 
-
-# app/crypto/shamir.py - ДОБАВИТЬ В КОНЕЦ ФАЙЛА
-
 def verify_shares(shares: Sequence[Share], k: int, prime: int = PRIME) -> bool:
-    """
-    Проверяет, что доли могут быть восстановлены в секрет.
-
-    Args:
-        shares: Список долей (x, y)
-        k: Пороговое количество долей
-        prime: Простое число для поля
-
-    Returns:
-        True если доли валидны, False в противном случае
-    """
     if len(shares) < k:
         return False
 
-    # Проверяем уникальность x-координат
     xs = [x for x, _ in shares]
     if len(xs) != len(set(xs)):
         return False
 
-    # Берём первые k долей
     test_shares = shares[:k]
 
-    # Для каждой оставшейся доли проверяем, лежит ли она на том же полиноме
-    # Реконструируем полином через интерполяцию Лагранжа
     for i in range(k, len(shares)):
         x_i, y_i = shares[i]
 
-        # Вычисляем ожидаемое значение y для x_i через интерполяцию
         expected_y = 0
         for j, (x_j, y_j) in enumerate(test_shares):
-            # Вычисляем коэффициент Лагранжа для точки x_i
             numerator = 1
             denominator = 1
 
